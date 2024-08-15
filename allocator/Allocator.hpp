@@ -16,28 +16,29 @@ class Allocator {
 public:
 	Allocator() {
 		pool.fill(0x00);
-		queue = 0;
 
 		for(T i = 0; i < num_blocks; i++) {
-			records[i].next = i + 1;
+			records[i] = Record{i, static_cast<T>(i + 1)};
 		}
 
-		records[num_blocks].next = num_blocks;
+		records[num_blocks] = Record{num_blocks, num_blocks};
+
+		queue.store(records[0]);
 	}
 	
 	~Allocator() = default;
 
 	void* allocate_with_mutex() {
 		std::lock_guard<std::mutex> guard(mutex);
-		T index = queue;
+		Record head = queue.load();
 
-		queue = records[index].next;
+		queue.store(records[head.next]);
 
-		if(index == num_blocks) {
+		if(head.index == num_blocks) {
 			return nullptr;
 		}
 
-		return (pool.data() + data_size*index);
+		return (pool.data() + data_size*head.index);
 	}
 
 	void deallocate_with_mutex(void* ptr) {
@@ -48,28 +49,23 @@ public:
 
 		T index = (data - pool.data())/data_size;
 		std::lock_guard<std::mutex> guard(mutex);
+		Record head = queue.load();
 
-		records[index].next = queue;
-		queue = index;
+		records[index].next = head.index;
+		queue.store(records[index]);
 	}
 
-	/*
-		For some unknown reason atomic version randomly fails multithreaded test
-	*/
-
 	void* allocate_with_atomic() {
-		T desired;
-		T expected = queue.load(std::memory_order_relaxed);
+		Record head = queue.load(std::memory_order_relaxed);
 
 		do {
-			desired = records[expected].next;
-		} while(queue.compare_exchange_weak(expected, desired, std::memory_order_release, std::memory_order_relaxed) == false);
+		} while(queue.compare_exchange_weak(head, records[head.next], std::memory_order_release, std::memory_order_relaxed) == false);
 
-		if(expected == num_blocks) {
+		if(head.index == num_blocks) {
 			return nullptr;
 		}
 
-		return (pool.data() + data_size*expected);
+		return (pool.data() + data_size*head.index);
 	}
 
 	void deallocate_with_atomic(void* ptr) {
@@ -78,17 +74,18 @@ public:
 
 		assert(in_bounds == true);
 
-		T desired = (data - pool.data())/data_size;
-		T expected = queue.load(std::memory_order_relaxed);
+		T index = (data - pool.data())/data_size;
+		Record head = queue.load(std::memory_order_relaxed);
 
 		do {
-			records[desired].next = expected;
-		} while(queue.compare_exchange_weak(expected, desired, std::memory_order_release, std::memory_order_relaxed) == false);
+			records[index].next = head.index;
+		} while(queue.compare_exchange_weak(head, records[index], std::memory_order_release, std::memory_order_relaxed) == false);
 	}
 
 private:
 	struct Record {
-		T next; // Index (not pointer !) to the next cell in pool
+		T index;
+		T next; // Also an index (not a pointer !) to the next free cell in the pool
 	};
 
 	static constexpr T round_up(T size) {
@@ -99,7 +96,7 @@ private:
 
 	std::array<uint8_t, data_size*num_blocks> pool;
 	std::array<Record, num_blocks + 1> records; // Last record is a dummy
-	std::atomic<T> queue;
+	std::atomic<Record> queue;
 	std::mutex mutex;
 };
 
