@@ -20,11 +20,9 @@ public:
 
 		for(T i = 0; i < num_blocks; i++) {
 			records[i].next = i + 1;
-			records[i].is_allocated = false;
 		}
 
 		records[num_blocks].next = num_blocks;
-		records[num_blocks].is_allocated = false;
 	}
 	
 	~Allocator() = default;
@@ -39,10 +37,6 @@ public:
 			return nullptr;
 		}
 
-		assert(records[index].is_allocated == false);
-
-		records[index].is_allocated = true;
-
 		return (pool.data() + data_size*index);
 	}
 
@@ -55,10 +49,7 @@ public:
 		T index = (data - pool.data())/data_size;
 		std::lock_guard<std::mutex> guard(mutex);
 
-		assert(records[index].is_allocated == true);
-
 		records[index].next = queue;
-		records[index].is_allocated = false;
 		queue = index;
 	}
 
@@ -78,11 +69,6 @@ public:
 			return nullptr;
 		}
 
-		size_t expected_state = false;
-		bool exchange_state_result = records[expected].is_allocated.compare_exchange_weak(expected_state, true, std::memory_order_release, std::memory_order_relaxed);
-
-		assert(exchange_state_result == true);
-
 		return (pool.data() + data_size*expected);
 	}
 
@@ -93,12 +79,6 @@ public:
 		assert(in_bounds == true);
 
 		T desired = (data - pool.data())/data_size;
-
-		size_t expected_state = true;
-		bool exchange_state_result = records[desired].is_allocated.compare_exchange_weak(expected_state, false, std::memory_order_release, std::memory_order_relaxed);
-
-		assert(exchange_state_result == true);
-
 		T expected = queue.load(std::memory_order_relaxed);
 
 		do {
@@ -109,7 +89,6 @@ public:
 private:
 	struct Record {
 		T next; // Index (not pointer !) to the next cell in pool
-		std::atomic<size_t> is_allocated;
 	};
 
 	static constexpr T round_up(T size) {

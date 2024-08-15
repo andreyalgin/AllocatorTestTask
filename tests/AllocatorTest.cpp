@@ -151,7 +151,7 @@ TEST_F(AllocatorTest, Multithreading) {
 /*
     For some unknown reason atomic version randomly fails multithreaded test
 */
-TEST_F(AllocatorTest, DISABLED_Multithreading_with_atomic) {
+TEST_F(AllocatorTest, Multithreading_with_atomic) {
     Allocator allocator;
     std::thread task1{test_task_handler_with_atomic, std::ref(allocator), 1};
     std::thread task2{test_task_handler_with_atomic, std::ref(allocator), 2};
